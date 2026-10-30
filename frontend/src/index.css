@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", sans-serif;
+  --color-tutor-green: #4d6045;
+  --color-tutor-sage: #91ad91;
+  --color-tutor-gold: #c49a36;
+  --color-tutor-cream: #f7f5ed;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-tutor-cream text-slate-900 antialiased;
+  }
+}
