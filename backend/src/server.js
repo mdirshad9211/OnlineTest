@@ -309,10 +309,35 @@ app.patch('/api/admin/tests/:testId', authenticate, requireRole('admin'), async 
       if (test) await pool.query('UPDATE tests SET active=FALSE WHERE category_id=?', [test.category_id])
     }
     const fields = []; const values = []
-    for (const field of ['title', 'description', 'active']) if (request.body[field] !== undefined) { fields.push(`${field}=?`); values.push(request.body[field]) }
+    for (const field of ['title', 'description', 'category_id', 'duration_seconds', 'active']) if (request.body[field] !== undefined) { fields.push(`${field}=?`); values.push(request.body[field]) }
     if (fields.length) { values.push(request.params.testId); const [result] = await pool.query(`UPDATE tests SET ${fields.join(',')} WHERE id=?`, values); if (!result.affectedRows) return response.status(404).json({ message: 'Test not found.' }) }
     if (Array.isArray(request.body.assignedLearners)) { await pool.query('DELETE FROM test_assignments WHERE test_id=?', [request.params.testId]); for (const learnerId of request.body.assignedLearners) await pool.query('INSERT INTO test_assignments (test_id,learner_id) SELECT ?,id FROM users WHERE id=? AND role="learner"', [request.params.testId, learnerId]) }
     response.json({ test: await getTest(request.params.testId, true) })
+  } catch (error) { next(error) }
+})
+
+app.patch('/api/admin/tests/:testId/questions/:questionId', authenticate, requireRole('admin'), async (request, response, next) => {
+  try {
+    const { question, section, options, answer } = request.body || {}
+    if (!question?.trim() || !Array.isArray(options) || options.length !== 4 || options.some((option) => !String(option).trim()) || !options.includes(answer)) return response.status(400).json({ message: 'Question, four options, and a valid answer are required.' })
+    const [[existing]] = await pool.query('SELECT id FROM questions WHERE id=? AND test_id=?', [request.params.questionId, request.params.testId])
+    if (!existing) return response.status(404).json({ message: 'Question not found.' })
+    await withTransaction(async (connection) => {
+      await connection.query('UPDATE questions SET question_text=?,section=?,answer_key=? WHERE id=? AND test_id=?', [question.trim(), String(section || '').trim(), answer, request.params.questionId, request.params.testId])
+      await connection.query('UPDATE question_options SET option_text=? WHERE question_id=? AND option_order=?', [options[0], request.params.questionId, 0])
+      await connection.query('UPDATE question_options SET option_text=? WHERE question_id=? AND option_order=?', [options[1], request.params.questionId, 1])
+      await connection.query('UPDATE question_options SET option_text=? WHERE question_id=? AND option_order=?', [options[2], request.params.questionId, 2])
+      await connection.query('UPDATE question_options SET option_text=? WHERE question_id=? AND option_order=?', [options[3], request.params.questionId, 3])
+    })
+    response.json({ test: await getTest(request.params.testId, true) })
+  } catch (error) { next(error) }
+})
+
+app.delete('/api/admin/tests/:testId/questions/:questionId', authenticate, requireRole('admin'), async (request, response, next) => {
+  try {
+    const [result] = await pool.query('DELETE FROM questions WHERE id=? AND test_id=?', [request.params.questionId, request.params.testId])
+    if (!result.affectedRows) return response.status(404).json({ message: 'Question not found.' })
+    response.status(204).end()
   } catch (error) { next(error) }
 })
 

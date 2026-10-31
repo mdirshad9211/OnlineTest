@@ -103,6 +103,17 @@ function AdminPanel({ token, user, onLogout }) {
     load()
   }
 
+  const editCategory = async (category) => {
+    const name = window.prompt('Category name', category.name)
+    if (name === null) return
+    const description = window.prompt('Category description', category.description || '')
+    if (description === null) return
+    const response = await request(token, `/admin/categories/${category.id}`, { method: 'PATCH', body: JSON.stringify({ name, description }) })
+    const payload = await response.json().catch(() => ({}))
+    setNotice(response.ok ? 'Category updated.' : payload.message || 'Could not update category.')
+    load()
+  }
+
   const navItems = [
     ['overview', 'Overview', 'home'],
     ['categories', 'Categories', 'folder'],
@@ -163,7 +174,7 @@ function AdminPanel({ token, user, onLogout }) {
             {notice && <p className="mb-5 rounded border border-slate-200 bg-white p-3 text-sm text-slate-600">{notice}</p>}
 
             {section === 'overview' && <Overview stats={stats} tests={tests} />}
-            {section === 'categories' && <CategoryManager categories={categories} onCreate={createCategory} onDelete={deleteCategory} />}
+            {section === 'categories' && <CategoryManager categories={categories} onCreate={createCategory} onDelete={deleteCategory} onEdit={editCategory} />}
             {section === 'tests' && <ExamManager token={token} tests={tests} categories={categories} learners={learners} onSaved={load} onNotice={setNotice} />}
             {section === 'results' && <DataTable title="Student results" headers={['Student', 'Exam', 'Score', 'Submitted']} rows={results.map((item) => [item.learner_name, item.test_title, `${item.score}/${item.total_questions}`, item.submitted_at])} />}
             {section === 'monitoring' && <DataTable title="Exam monitoring events" headers={['Student', 'Exam', 'Event', 'Time']} rows={events.map((item) => [item.learner_name, item.test_title, item.event_type, item.occurred_at])} />}
@@ -199,7 +210,7 @@ function Overview({ stats, tests }) {
   )
 }
 
-function CategoryManager({ categories, onCreate, onDelete }) {
+function CategoryManager({ categories, onCreate, onDelete, onEdit }) {
   return (
     <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
       <form onSubmit={onCreate} className="rounded border border-slate-200 bg-white p-5">
@@ -211,7 +222,7 @@ function CategoryManager({ categories, onCreate, onDelete }) {
       <DataTable
         title="Exam categories"
         headers={['Name', 'Description', 'Action']}
-        rows={categories.map((category) => [category.name, category.description || '—', <button key={category.id} onClick={() => onDelete(category.id)} className="text-red-600">Delete</button>])}
+        rows={categories.map((category) => [category.name, category.description || '—', <div key={category.id} className="flex gap-3"><button onClick={() => onEdit(category)} className="text-tutor-green">Edit</button><button onClick={() => onDelete(category.id)} className="text-red-600">Delete</button></div>])}
       />
     </div>
   )
@@ -220,6 +231,60 @@ function CategoryManager({ categories, onCreate, onDelete }) {
 function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) {
   const [selectedTest, setSelectedTest] = useState('')
   const [manual, setManual] = useState({ question: '', option1: '', option2: '', option3: '', option4: '', answer: '' })
+  const activeTest = tests.find((test) => test.id === selectedTest)
+
+  const editExam = async (test) => {
+    const title = window.prompt('Exam title', test.title)
+    if (title === null) return
+    const description = window.prompt('Exam description', test.description)
+    if (description === null) return
+    const duration = window.prompt('Duration in seconds', String(test.durationSeconds))
+    if (duration === null) return
+    const categoryName = window.prompt(`Category name (${categories.map((category) => category.name).join(', ')})`, test.categoryName)
+    if (categoryName === null) return
+    const category = categories.find((item) => item.name.toLowerCase() === categoryName.trim().toLowerCase())
+    if (!category) {
+      onNotice('Enter one of the listed category names.')
+      return
+    }
+    const categoryId = category.id
+    const response = await request(token, `/admin/tests/${test.id}`, { method: 'PATCH', body: JSON.stringify({ title, description, category_id: categoryId, duration_seconds: Number(duration) }) })
+    const payload = await response.json().catch(() => ({}))
+    onNotice(response.ok ? 'Exam updated.' : payload.message || 'Could not update exam.')
+    onSaved()
+  }
+
+  const deleteExam = async (test) => {
+    if (!window.confirm(`Delete "${test.title}" and all its questions?`)) return
+    const response = await request(token, `/admin/tests/${test.id}`, { method: 'DELETE' })
+    const payload = await response.json().catch(() => ({}))
+    onNotice(response.ok ? 'Exam deleted.' : payload.message || 'Could not delete exam.')
+    if (selectedTest === test.id) setSelectedTest('')
+    onSaved()
+  }
+
+  const editQuestion = async (test, question) => {
+    const questionText = window.prompt('Question', question.question)
+    if (questionText === null) return
+    const section = window.prompt('Section', question.section || '')
+    if (section === null) return
+    const options = question.options.map((option, index) => window.prompt(`Option ${String.fromCharCode(65 + index)}`, option))
+    if (options.some((option) => option === null)) return
+    const answer = window.prompt('Correct answer (exact option text)', question.answer)
+    if (answer === null) return
+    const response = await request(token, `/admin/tests/${test.id}/questions/${question.id}`, { method: 'PATCH', body: JSON.stringify({ question: questionText, section, options, answer }) })
+    const payload = await response.json().catch(() => ({}))
+    onNotice(response.ok ? 'Question updated.' : payload.message || 'Could not update question.')
+    onSaved()
+  }
+
+  const deleteQuestion = async (test, question) => {
+    if (!window.confirm(`Delete this question?\n\n${question.question}`)) return
+    const response = await request(token, `/admin/tests/${test.id}/questions/${question.id}`, { method: 'DELETE' })
+    const payload = await response.json().catch(() => ({}))
+    onNotice(response.ok ? 'Question deleted.' : payload.message || 'Could not delete question.')
+    onSaved()
+  }
 
   const createExam = async (event) => {
     event.preventDefault()
@@ -289,6 +354,12 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
         <button className="mt-4 rounded-lg bg-tutor-green px-5 py-2.5 text-sm font-semibold text-white">Create exam</button>
       </form>
 
+      <DataTable
+        title="Existing exams"
+        headers={['Exam', 'Category', 'Questions', 'Status', 'Actions']}
+        rows={tests.map((test) => [test.title, test.categoryName, test.questions.length, test.active ? 'Active' : 'Inactive', <div key={test.id} className="flex gap-3"><button onClick={() => editExam(test)} className="text-tutor-green">Edit</button><button onClick={() => deleteExam(test)} className="text-red-600">Delete</button></div>])}
+      />
+
       <div className="rounded border border-slate-200 bg-white p-5">
         <h2 className="font-semibold text-slate-900">Question tools</h2>
         <select value={selectedTest} onChange={(event) => setSelectedTest(event.target.value)} className="mt-4 w-full rounded border border-slate-300 p-2.5 text-sm">
@@ -297,7 +368,12 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
         </select>
 
         {selectedTest && (
-          <div className="mt-5 grid gap-6 lg:grid-cols-2">
+          <div className="mt-5 grid gap-6">
+            <div className="rounded border border-slate-200 p-4">
+              <h3 className="font-semibold text-slate-900">Questions ({activeTest?.questions.length || 0})</h3>
+              <div className="mt-3 divide-y divide-slate-100">{activeTest?.questions.map((question, index) => <div key={question.id} className="flex flex-col gap-2 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium text-slate-800">Q{index + 1}. {question.question}</p><p className="text-xs text-slate-500">{question.section || 'No section'} · Answer: {question.answer}</p></div><div className="flex gap-3"><button onClick={() => editQuestion(activeTest, question)} className="text-tutor-green">Edit</button><button onClick={() => deleteQuestion(activeTest, question)} className="text-red-600">Delete</button></div></div>)}</div>
+            </div>
+            <div className="grid gap-6 lg:grid-cols-2">
             <form onSubmit={upload} className="rounded border border-dashed border-slate-300 p-4">
               <h3 className="font-semibold text-slate-900">Upload Excel questions</h3>
               <p className="mt-1 text-xs text-slate-500">Columns: Section, Question, Option A, Option B, Option C, Option D, Answer key</p>
@@ -322,6 +398,7 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
               <input value={manual.answer} onChange={(event) => setManual({ ...manual, answer: event.target.value })} className="mt-2 w-full rounded border border-slate-300 p-2 text-sm" placeholder="Correct answer (exact option text)" required />
               <button className="mt-3 rounded-lg bg-tutor-green px-4 py-2 text-sm font-semibold text-white">Add question</button>
             </form>
+            </div>
           </div>
         )}
       </div>

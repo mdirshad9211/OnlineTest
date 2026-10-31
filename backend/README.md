@@ -61,6 +61,8 @@ The browser records tab visibility changes, window blur, fullscreen exits, copy,
 - `POST /api/admin/tests/:testId/questions/manual`
 - `PATCH /api/admin/tests/:testId`
 - `DELETE /api/admin/tests/:testId`
+- `PATCH /api/admin/tests/:testId/questions/:questionId`
+- `DELETE /api/admin/tests/:testId/questions/:questionId`
 - `GET /api/admin/results`
 - `GET /api/admin/monitoring`
 - `GET /api/admin/feedback`
