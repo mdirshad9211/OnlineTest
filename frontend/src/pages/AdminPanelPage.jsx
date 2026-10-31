@@ -300,7 +300,7 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
           <div className="mt-5 grid gap-6 lg:grid-cols-2">
             <form onSubmit={upload} className="rounded border border-dashed border-slate-300 p-4">
               <h3 className="font-semibold text-slate-900">Upload Excel questions</h3>
-              <p className="mt-1 text-xs text-slate-500">Columns: question, option 1, option 2, option 3, option 4, answer</p>
+              <p className="mt-1 text-xs text-slate-500">Columns: Section, Question, Option A, Option B, Option C, Option D, Answer key</p>
               <input name="file" type="file" accept=".xlsx,.xls" className="mt-4 text-sm" required />
               <button className="mt-4 rounded-lg bg-tutor-green px-4 py-2 text-sm font-semibold text-white">Upload questions</button>
             </form>
@@ -308,6 +308,7 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
             <form onSubmit={addManual} className="rounded border border-slate-200 p-4">
               <h3 className="font-semibold text-slate-900">Add question manually</h3>
               <input value={manual.question} onChange={(event) => setManual({ ...manual, question: event.target.value })} className="mt-3 w-full rounded border border-slate-300 p-2 text-sm" placeholder="Question" required />
+              <input value={manual.section || ''} onChange={(event) => setManual({ ...manual, section: event.target.value })} className="mt-2 w-full rounded border border-slate-300 p-2 text-sm" placeholder="Section (optional)" />
               {[1, 2, 3, 4].map((number) => (
                 <input
                   key={number}

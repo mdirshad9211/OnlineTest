@@ -1,6 +1,10 @@
-import 'dotenv/config'
 import crypto from 'node:crypto'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import dotenv from 'dotenv'
 import mysql from 'mysql2/promise'
+
+dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env.production'), override: true })
 
 export const pool = mysql.createPool({
   host: process.env.MYSQL_HOST,
@@ -59,6 +63,24 @@ export async function ensureSchemaCompatibility() {
     if (!existingKey.count) await pool.query(`ALTER TABLE users ADD UNIQUE KEY ${key} (${column})`)
   }
 
+  for (const [column, definition] of [['category_id', 'CHAR(36) NULL']]) {
+    const [[existingColumn]] = await pool.query(
+      `SELECT COUNT(*) count
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users' AND COLUMN_NAME = ?`,
+      [database, column],
+    )
+    if (!existingColumn.count) await pool.query(`ALTER TABLE users ADD COLUMN ${column} ${definition}`)
+  }
+
+  const [[userCategoryForeignKey]] = await pool.query(
+    `SELECT COUNT(*) count
+     FROM information_schema.KEY_COLUMN_USAGE
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'users'
+       AND COLUMN_NAME = 'category_id' AND REFERENCED_TABLE_NAME = 'categories'`,
+    [database],
+  )
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS categories (
       id CHAR(36) PRIMARY KEY,
@@ -78,6 +100,14 @@ export async function ensureSchemaCompatibility() {
   if (!categoryColumn.count) {
     await pool.query('ALTER TABLE tests ADD COLUMN category_id CHAR(36) NULL')
   }
+
+  const [[questionSectionColumn]] = await pool.query(
+    `SELECT COUNT(*) count
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'questions' AND COLUMN_NAME = 'section'`,
+    [database],
+  )
+  if (!questionSectionColumn.count) await pool.query(`ALTER TABLE questions ADD COLUMN section VARCHAR(120) NOT NULL DEFAULT ''`)
 
   const [[category]] = await pool.query('SELECT id FROM categories ORDER BY created_at LIMIT 1')
   if (!category) {
@@ -104,5 +134,9 @@ export async function ensureSchemaCompatibility() {
   )
   if (!foreignKey.count) {
     await pool.query('ALTER TABLE tests ADD CONSTRAINT fk_tests_category FOREIGN KEY (category_id) REFERENCES categories(id)')
+  }
+
+  if (!userCategoryForeignKey.count) {
+    await pool.query('ALTER TABLE users ADD CONSTRAINT fk_users_category FOREIGN KEY (category_id) REFERENCES categories(id)')
   }
 }
