@@ -103,17 +103,6 @@ function AdminPanel({ token, user, onLogout }) {
     load()
   }
 
-  const editCategory = async (category) => {
-    const name = window.prompt('Category name', category.name)
-    if (name === null) return
-    const description = window.prompt('Category description', category.description || '')
-    if (description === null) return
-    const response = await request(token, `/admin/categories/${category.id}`, { method: 'PATCH', body: JSON.stringify({ name, description }) })
-    const payload = await response.json().catch(() => ({}))
-    setNotice(response.ok ? 'Category updated.' : payload.message || 'Could not update category.')
-    load()
-  }
-
   const navItems = [
     ['overview', 'Overview', 'home'],
     ['categories', 'Categories', 'folder'],
@@ -174,7 +163,7 @@ function AdminPanel({ token, user, onLogout }) {
             {notice && <p className="mb-5 rounded border border-slate-200 bg-white p-3 text-sm text-slate-600">{notice}</p>}
 
             {section === 'overview' && <Overview stats={stats} tests={tests} />}
-            {section === 'categories' && <CategoryManager categories={categories} onCreate={createCategory} onDelete={deleteCategory} onEdit={editCategory} />}
+            {section === 'categories' && <CategoryManager token={token} categories={categories} onCreate={createCategory} onDelete={deleteCategory} onSaved={load} onNotice={setNotice} />}
             {section === 'tests' && <ExamManager token={token} tests={tests} categories={categories} learners={learners} onSaved={load} onNotice={setNotice} />}
             {section === 'results' && <DataTable title="Student results" headers={['Student', 'Exam', 'Score', 'Submitted']} rows={results.map((item) => [item.learner_name, item.test_title, `${item.score}/${item.total_questions}`, item.submitted_at])} />}
             {section === 'monitoring' && <DataTable title="Exam monitoring events" headers={['Student', 'Exam', 'Event', 'Time']} rows={events.map((item) => [item.learner_name, item.test_title, item.event_type, item.occurred_at])} />}
@@ -210,8 +199,20 @@ function Overview({ stats, tests }) {
   )
 }
 
-function CategoryManager({ categories, onCreate, onDelete, onEdit }) {
+function CategoryManager({ token, categories, onCreate, onDelete, onSaved, onNotice }) {
+  const [editing, setEditing] = useState(null)
+  const [form, setForm] = useState({ name: '', description: '' })
+  const openEdit = (category) => { setEditing(category); setForm({ name: category.name, description: category.description || '' }) }
+  const saveEdit = async (event) => {
+    event.preventDefault()
+    const response = await request(token, `/admin/categories/${editing.id}`, { method: 'PATCH', body: JSON.stringify(form) })
+    const payload = await response.json().catch(() => ({}))
+    onNotice(response.ok ? 'Category updated.' : payload.message || 'Could not update category.')
+    if (response.ok) setEditing(null)
+    onSaved()
+  }
   return (
+    <>
     <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
       <form onSubmit={onCreate} className="rounded border border-slate-200 bg-white p-5">
         <h2 className="font-semibold text-slate-900">Create category</h2>
@@ -222,35 +223,41 @@ function CategoryManager({ categories, onCreate, onDelete, onEdit }) {
       <DataTable
         title="Exam categories"
         headers={['Name', 'Description', 'Action']}
-        rows={categories.map((category) => [category.name, category.description || '—', <div key={category.id} className="flex gap-3"><button onClick={() => onEdit(category)} className="text-tutor-green">Edit</button><button onClick={() => onDelete(category.id)} className="text-red-600">Delete</button></div>])}
+        rows={categories.map((category) => [category.name, category.description || '—', <div key={category.id} className="flex gap-3"><button onClick={() => openEdit(category)} className="text-tutor-green">Edit</button><button onClick={() => onDelete(category.id)} className="text-red-600">Delete</button></div>])}
       />
     </div>
+    {editing && <Modal title="Edit category" onClose={() => setEditing(null)}><form onSubmit={saveEdit} className="space-y-4"><label className="block text-sm font-semibold">Name<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="mt-1 w-full rounded border border-slate-300 p-2.5" required /></label><label className="block text-sm font-semibold">Description<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} className="mt-1 w-full rounded border border-slate-300 p-2.5" rows="4" /></label><ModalActions onCancel={() => setEditing(null)} submitLabel="Save category" /></form></Modal>}
+    </>
   )
 }
 
 function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) {
   const [selectedTest, setSelectedTest] = useState('')
   const [manual, setManual] = useState({ question: '', option1: '', option2: '', option3: '', option4: '', answer: '' })
+  const [editingExam, setEditingExam] = useState(null)
+  const [editingQuestion, setEditingQuestion] = useState(null)
+  const [examForm, setExamForm] = useState({})
+  const [questionForm, setQuestionForm] = useState({})
   const activeTest = tests.find((test) => test.id === selectedTest)
 
-  const editExam = async (test) => {
-    const title = window.prompt('Exam title', test.title)
-    if (title === null) return
-    const description = window.prompt('Exam description', test.description)
-    if (description === null) return
-    const duration = window.prompt('Duration in seconds', String(test.durationSeconds))
-    if (duration === null) return
-    const categoryName = window.prompt(`Category name (${categories.map((category) => category.name).join(', ')})`, test.categoryName)
-    if (categoryName === null) return
-    const category = categories.find((item) => item.name.toLowerCase() === categoryName.trim().toLowerCase())
-    if (!category) {
-      onNotice('Enter one of the listed category names.')
-      return
-    }
-    const categoryId = category.id
-    const response = await request(token, `/admin/tests/${test.id}`, { method: 'PATCH', body: JSON.stringify({ title, description, category_id: categoryId, duration_seconds: Number(duration) }) })
+  const editExam = (test) => {
+    setEditingExam(test)
+    setExamForm({ title: test.title, description: test.description, category_id: test.categoryId, duration_minutes: Math.ceil(test.durationSeconds / 60), active: test.active })
+  }
+
+  const saveExam = async (event) => {
+    event.preventDefault()
+    const response = await request(token, `/admin/tests/${editingExam.id}`, { method: 'PATCH', body: JSON.stringify({ ...examForm, duration_seconds: Number(examForm.duration_minutes) * 60 }) })
     const payload = await response.json().catch(() => ({}))
     onNotice(response.ok ? 'Exam updated.' : payload.message || 'Could not update exam.')
+    if (response.ok) setEditingExam(null)
+    onSaved()
+  }
+
+  const toggleExam = async (test) => {
+    const response = await request(token, `/admin/tests/${test.id}`, { method: 'PATCH', body: JSON.stringify({ active: !test.active }) })
+    const payload = await response.json().catch(() => ({}))
+    onNotice(response.ok ? `Exam ${test.active ? 'deactivated' : 'activated'}.` : payload.message || 'Could not update exam.')
     onSaved()
   }
 
@@ -263,18 +270,17 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
     onSaved()
   }
 
-  const editQuestion = async (test, question) => {
-    const questionText = window.prompt('Question', question.question)
-    if (questionText === null) return
-    const section = window.prompt('Section', question.section || '')
-    if (section === null) return
-    const options = question.options.map((option, index) => window.prompt(`Option ${String.fromCharCode(65 + index)}`, option))
-    if (options.some((option) => option === null)) return
-    const answer = window.prompt('Correct answer (exact option text)', question.answer)
-    if (answer === null) return
-    const response = await request(token, `/admin/tests/${test.id}/questions/${question.id}`, { method: 'PATCH', body: JSON.stringify({ question: questionText, section, options, answer }) })
+  const editQuestion = (test, question) => {
+    setEditingQuestion({ testId: test.id, question })
+    setQuestionForm({ question: question.question, section: question.section || '', options: [...question.options], answer: question.answer })
+  }
+
+  const saveQuestion = async (event) => {
+    event.preventDefault()
+    const response = await request(token, `/admin/tests/${editingQuestion.testId}/questions/${editingQuestion.question.id}`, { method: 'PATCH', body: JSON.stringify(questionForm) })
     const payload = await response.json().catch(() => ({}))
     onNotice(response.ok ? 'Question updated.' : payload.message || 'Could not update question.')
+    if (response.ok) setEditingQuestion(null)
     onSaved()
   }
 
@@ -295,7 +301,7 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
         title: form.get('title'),
         description: form.get('description'),
         categoryId: form.get('categoryId'),
-        durationSeconds: Number(form.get('durationSeconds')),
+        durationSeconds: Number(form.get('durationMinutes')) * 60,
         active: form.get('active') === 'on',
         assignedLearners: form.getAll('assignedLearners'),
         questions: [],
@@ -313,6 +319,7 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
       method: 'POST',
       body: JSON.stringify({
         question: manual.question,
+        section: manual.section,
         options: [manual.option1, manual.option2, manual.option3, manual.option4],
         answer: manual.answer,
       }),
@@ -333,6 +340,7 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
   }
 
   return (
+    <>
     <div className="space-y-6">
       <form onSubmit={createExam} className="rounded border border-slate-200 bg-white p-5">
         <h2 className="font-semibold text-slate-900">Create exam</h2>
@@ -343,9 +351,9 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
             {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
           </select>
           <textarea name="description" className="rounded border border-slate-300 p-2.5 text-sm" placeholder="Description" required />
-          <input name="durationSeconds" type="number" min="60" defaultValue="1500" className="rounded border border-slate-300 p-2.5 text-sm" placeholder="Duration in seconds" required />
+          <label className="text-sm font-semibold">Duration (minutes)<input name="durationMinutes" type="number" min="1" defaultValue="25" className="rounded border border-slate-300 p-2.5 text-sm" placeholder="Duration in minutes" required /></label>
           <select name="assignedLearners" multiple className="min-h-28 rounded border border-slate-300 p-2.5 text-sm md:col-span-2" aria-label="Assign learners">
-            {learners.length ? learners.map((learner) => <option key={learner.id} value={learner.id}>{learner.name} ({learner.email})</option>) : <option disabled>No learners registered yet</option>}
+            {learners.length ? learners.map((learner) => <option key={learner.id} value={learner.id}>{learner.name}</option>) : <option disabled>No learners registered yet</option>}
           </select>
         </div>
         <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
@@ -357,7 +365,7 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
       <DataTable
         title="Existing exams"
         headers={['Exam', 'Category', 'Questions', 'Status', 'Actions']}
-        rows={tests.map((test) => [test.title, test.categoryName, test.questions.length, test.active ? 'Active' : 'Inactive', <div key={test.id} className="flex gap-3"><button onClick={() => editExam(test)} className="text-tutor-green">Edit</button><button onClick={() => deleteExam(test)} className="text-red-600">Delete</button></div>])}
+        rows={tests.map((test) => [test.title, test.categoryName, test.questions.length, test.active ? 'Active' : 'Inactive', <div key={test.id} className="flex flex-wrap gap-3"><button onClick={() => editExam(test)} className="text-tutor-green">Edit</button><button onClick={() => toggleExam(test)} className="text-slate-600">{test.active ? 'Make inactive' : 'Make active'}</button><button onClick={() => deleteExam(test)} className="text-red-600">Delete</button></div>])}
       />
 
       <div className="rounded border border-slate-200 bg-white p-5">
@@ -403,7 +411,18 @@ function ExamManager({ token, tests, categories, learners, onSaved, onNotice }) 
         )}
       </div>
     </div>
+    {editingExam && <Modal title="Edit exam" onClose={() => setEditingExam(null)}><form onSubmit={saveExam} className="grid gap-4"><label className="text-sm font-semibold">Title<input value={examForm.title} onChange={(event) => setExamForm({ ...examForm, title: event.target.value })} className="mt-1 w-full rounded border border-slate-300 p-2.5" required /></label><label className="text-sm font-semibold">Category<select value={examForm.category_id} onChange={(event) => setExamForm({ ...examForm, category_id: event.target.value })} className="mt-1 w-full rounded border border-slate-300 p-2.5" required>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label><label className="text-sm font-semibold">Description<textarea value={examForm.description} onChange={(event) => setExamForm({ ...examForm, description: event.target.value })} className="mt-1 w-full rounded border border-slate-300 p-2.5" rows="4" required /></label><label className="text-sm font-semibold">Duration (minutes)<input type="number" min="1" value={examForm.duration_minutes} onChange={(event) => setExamForm({ ...examForm, duration_minutes: event.target.value })} className="mt-1 w-full rounded border border-slate-300 p-2.5" required /></label><label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={Boolean(examForm.active)} onChange={(event) => setExamForm({ ...examForm, active: event.target.checked })} /> Active exam</label><ModalActions onCancel={() => setEditingExam(null)} submitLabel="Save exam" /></form></Modal>}
+    {editingQuestion && <Modal title="Edit question" onClose={() => setEditingQuestion(null)}><form onSubmit={saveQuestion} className="grid gap-4"><label className="text-sm font-semibold">Question<textarea value={questionForm.question} onChange={(event) => setQuestionForm({ ...questionForm, question: event.target.value })} className="mt-1 w-full rounded border border-slate-300 p-2.5" rows="4" required /></label><label className="text-sm font-semibold">Section<input value={questionForm.section} onChange={(event) => setQuestionForm({ ...questionForm, section: event.target.value })} className="mt-1 w-full rounded border border-slate-300 p-2.5" /></label>{questionForm.options?.map((option, index) => <label key={index} className="text-sm font-semibold">Option {String.fromCharCode(65 + index)}<input value={option} onChange={(event) => setQuestionForm({ ...questionForm, options: questionForm.options.map((item, itemIndex) => itemIndex === index ? event.target.value : item) })} className="mt-1 w-full rounded border border-slate-300 p-2.5" required /></label>)}<label className="text-sm font-semibold">Correct answer<select value={questionForm.answer} onChange={(event) => setQuestionForm({ ...questionForm, answer: event.target.value })} className="mt-1 w-full rounded border border-slate-300 p-2.5" required>{questionForm.options?.map((option, index) => <option key={index} value={option}>Option {String.fromCharCode(65 + index)}: {option}</option>)}</select></label><ModalActions onCancel={() => setEditingQuestion(null)} submitLabel="Save question" /></form></Modal>}
+    </>
   )
+}
+
+function Modal({ title, onClose, children }) {
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4" role="dialog" aria-modal="true"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"><div className="mb-5 flex items-center justify-between gap-4"><h2 className="text-xl font-bold text-slate-900">{title}</h2><button type="button" onClick={onClose} className="rounded px-2 py-1 text-xl text-slate-400 hover:bg-slate-100" aria-label="Close dialog">×</button></div>{children}</div></div>
+}
+
+function ModalActions({ onCancel, submitLabel }) {
+  return <div className="flex justify-end gap-3 border-t border-slate-100 pt-4"><button type="button" onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-600">Cancel</button><button type="submit" className="rounded-lg bg-tutor-green px-4 py-2.5 text-sm font-semibold text-white">{submitLabel}</button></div>
 }
 
 function DataTable({ title, headers, rows }) {

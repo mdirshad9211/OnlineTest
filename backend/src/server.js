@@ -305,8 +305,8 @@ app.post('/api/admin/tests/:testId/questions/manual', authenticate, requireRole(
 app.patch('/api/admin/tests/:testId', authenticate, requireRole('admin'), async (request, response, next) => {
   try {
     if (request.body.active === true) {
-      const [[test]] = await pool.query('SELECT category_id FROM tests WHERE id=?', [request.params.testId])
-      if (test) await pool.query('UPDATE tests SET active=FALSE WHERE category_id=?', [test.category_id])
+      const categoryId = request.body.category_id || (await pool.query('SELECT category_id FROM tests WHERE id=?', [request.params.testId]))[0][0]?.category_id
+      if (categoryId) await pool.query('UPDATE tests SET active=FALSE WHERE category_id=?', [categoryId])
     }
     const fields = []; const values = []
     for (const field of ['title', 'description', 'category_id', 'duration_seconds', 'active']) if (request.body[field] !== undefined) { fields.push(`${field}=?`); values.push(request.body[field]) }
