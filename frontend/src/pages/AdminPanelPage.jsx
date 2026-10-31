@@ -13,8 +13,8 @@ function request(token, path, options = {}) {
 }
 
 function AdminLogin({ onLogin }) {
-  const [email, setEmail] = useState('admin@quizly.test')
-  const [password, setPassword] = useState('Admin123!')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
 
   const submit = async (event) => {
