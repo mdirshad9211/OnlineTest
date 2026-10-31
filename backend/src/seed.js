@@ -7,7 +7,7 @@ import mysql from 'mysql2/promise'
 import XLSX from 'xlsx'
 import { pool, withTransaction } from './db.js'
 
-dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env.production') })
+dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env') })
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const projectRoot = path.resolve(root, '..')
