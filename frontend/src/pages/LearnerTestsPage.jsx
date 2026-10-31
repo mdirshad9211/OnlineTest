@@ -131,7 +131,7 @@ function LoadingState() {
   return <div className="mx-auto max-w-5xl px-5 py-16 text-center text-sm text-slate-500">Loading your assessment...</div>
 }
 
-function StudentLanding({ onLogin, onRegister }) {
+function StudentLanding({ onRegister }) {
   return (
     <main>
       <section className="relative overflow-hidden border-b border-[#dfe5dc] bg-gradient-to-br from-white via-tutor-cream to-[#e9f0e5]">
@@ -144,7 +144,6 @@ function StudentLanding({ onLogin, onRegister }) {
             <p className="mt-6 max-w-xl text-base leading-7 text-slate-600">Test your preparation, compete with top aspirants, and secure heavy tuition waivers and premium study resources through TutorX.</p>
             <div className="mt-8 flex flex-wrap gap-3">
                 <button onClick={onRegister} className="rounded-xl bg-tutor-green px-6 py-3 text-sm font-semibold text-white hover:bg-[#3f5039]">Register</button>
-                <button onClick={onLogin} className="rounded-xl border border-[#cfd9cb] bg-white px-6 py-3 text-sm font-semibold text-tutor-green hover:border-tutor-green hover:bg-tutor-cream">Already registered? Login</button>
             </div>
             <div className="mt-10 flex flex-wrap gap-x-6 gap-y-3 border-t border-slate-200 pt-5 text-sm font-semibold text-slate-600">
               <span>Up to 100% scholarship</span><span>Offline coaching access</span><span>Premium library resources</span>
@@ -410,7 +409,7 @@ export function LearnerTestsPage() {
   }
 
   let content =
-    phase === 'landing' ? <StudentLanding onLogin={() => setPhase('register')} onRegister={() => setPhase('register')} /> :
+    phase === 'landing' ? <StudentLanding onRegister={() => setPhase('register')} /> :
     phase === 'register' ? <Register onRegister={(payload) => { persistUser(payload); setPhase('loading') }} /> :
     <LoadingState />
 
