@@ -24,12 +24,12 @@ const passwordHash = (password) => crypto.scryptSync(password, 'quizly-local-see
 async function getTest(testId, includeAnswers = false) {
   const [tests] = await pool.query('SELECT t.id,t.title,t.description,t.duration_seconds,t.active,t.category_id,c.name category_name FROM tests t JOIN categories c ON c.id=t.category_id WHERE t.id = ?', [testId])
   if (!tests[0]) return null
-  const [questions] = await pool.query('SELECT id,question_text,question_order,answer_key FROM questions WHERE test_id = ? ORDER BY question_order', [testId])
+  const [questions] = await pool.query('SELECT id,question_text,section,question_order,answer_key FROM questions WHERE test_id = ? ORDER BY question_order', [testId])
   const [options] = questions.length ? await pool.query('SELECT question_id,option_text,option_order FROM question_options WHERE question_id IN (?) ORDER BY option_order', [questions.map((question) => question.id)]) : [[]]
   const [assignments] = await pool.query('SELECT learner_id FROM test_assignments WHERE test_id = ?', [testId])
   return {
     id: tests[0].id, title: tests[0].title, description: tests[0].description, categoryId: tests[0].category_id, categoryName: tests[0].category_name, duration: durationLabel(tests[0].duration_seconds), durationSeconds: tests[0].duration_seconds, active: Boolean(tests[0].active), assignedLearners: assignments.map((item) => item.learner_id),
-    questions: questions.map((question) => ({ id: question.id, question: question.question_text, options: options.filter((option) => option.question_id === question.id).sort((a, b) => a.option_order - b.option_order).map((option) => option.option_text), ...(includeAnswers ? { answer: question.answer_key } : {}) })),
+    questions: questions.map((question) => ({ id: question.id, question: question.question_text, section: question.section, options: options.filter((option) => option.question_id === question.id).sort((a, b) => a.option_order - b.option_order).map((option) => option.option_text), ...(includeAnswers ? { answer: question.answer_key } : {}) })),
   }
 }
 
@@ -54,8 +54,47 @@ function validateTest(body) {
   return null
 }
 
+const cleanCell = (value) => String(value ?? '').replace(/\s+/g, ' ').trim()
+const normalizeHeader = (value) => cleanCell(value).toLowerCase().replace(/[^a-z0-9]/g, '')
+
+function parseExcelQuestions(workbook) {
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName]
+    const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+    const headerIndex = rawRows.findIndex((row) => {
+      const headers = row.map(normalizeHeader)
+      return headers.some((value) => value === 'question' || value === 'questiontext') &&
+        headers.some((value) => value.includes('optiona')) &&
+        headers.some((value) => value.includes('answer'))
+    })
+    if (headerIndex < 0) continue
+    const rows = XLSX.utils.sheet_to_json(sheet, { range: headerIndex, defval: '' })
+    const headers = Object.keys(rows[0] || {})
+    const findColumn = (names) => headers.find((header) => names.includes(normalizeHeader(header)))
+    const sectionColumn = findColumn(['section'])
+    const questionColumn = findColumn(['question', 'questiontext'])
+    const optionColumns = ['optiona', 'optionb', 'optionc', 'optiond'].map((name) => findColumn([name]))
+    const answerColumn = headers.find((header) => normalizeHeader(header).includes('answer'))
+    if (!questionColumn || optionColumns.some((column) => !column) || !answerColumn) throw new Error('Excel must contain section, question, option A, option B, option C, option D, and an answer column.')
+    return rows.map((row) => {
+      const options = optionColumns.map((column) => cleanCell(row[column]))
+      const answerKey = cleanCell(row[answerColumn]).toUpperCase().replace(/[^A-D]/g, '').slice(0, 1)
+      const answerIndex = answerKey ? answerKey.charCodeAt(0) - 65 : -1
+      return { section: cleanCell(row[sectionColumn]), question: cleanCell(row[questionColumn]), options, answer: options[answerIndex] || '' }
+    }).filter((item) => item.question && item.options.every(Boolean) && item.answer)
+  }
+  throw new Error('No question sheet with question, options A-D, and answer columns was found.')
+}
+
 app.get('/api/health', async (_request, response, next) => {
   try { await pool.query('SELECT 1'); response.json({ status: 'ok', database: 'mysql' }) } catch (error) { next(error) }
+})
+
+app.get('/api/registration-categories', async (_request, response, next) => {
+  try {
+    const [categories] = await pool.query('SELECT c.id,c.name,c.description FROM categories c INNER JOIN tests t ON t.category_id=c.id AND t.active=TRUE ORDER BY c.name')
+    response.json({ categories })
+  } catch (error) { next(error) }
 })
 
 app.post('/api/auth/login', async (request, response, next) => {
@@ -77,8 +116,9 @@ app.post('/api/auth/register', async (request, response, next) => {
     const aadhaarNumber = String(request.body?.aadhaarNumber || '').replace(/\D/g, '')
     const location = String(request.body?.location || '').trim()
     const schoolName = String(request.body?.schoolName || '').trim()
+    const categoryId = String(request.body?.categoryId || '').trim()
 
-    if (!name || !fatherName || !email || !phone || !aadhaarNumber || !location || !schoolName) return response.status(400).json({ message: 'All registration fields are required.' })
+    if (!name || !fatherName || !email || !phone || !aadhaarNumber || !location || !schoolName || !categoryId) return response.status(400).json({ message: 'All registration fields are required, including your class and stream.' })
     if (!/^\d{10}$/.test(phone)) return response.status(400).json({ message: 'Mobile number must contain exactly 10 digits.' })
     if (!/^\d{12}$/.test(aadhaarNumber)) return response.status(400).json({ message: 'Aadhaar number must contain exactly 12 digits.' })
 
@@ -90,8 +130,8 @@ app.post('/api/auth/register', async (request, response, next) => {
     const userId = crypto.randomUUID()
     const user = { id: userId, name, email, role: 'learner' }
     await withTransaction(async (connection) => {
-      await connection.query('INSERT INTO users (id,name,father_name,email,phone,aadhaar_number,location,school_name,password_hash,role) VALUES (?,?,?,?,?,?,?,?,?,?)', [userId, name, fatherName, email, phone, aadhaarNumber, location, schoolName, passwordHash(crypto.randomBytes(32).toString('hex')), user.role])
-      const [[activeTest]] = await connection.query('SELECT id FROM tests WHERE active=TRUE ORDER BY created_at LIMIT 1')
+      await connection.query('INSERT INTO users (id,name,father_name,email,phone,aadhaar_number,location,school_name,category_id,password_hash,role) VALUES (?,?,?,?,?,?,?,?,?,?,?)', [userId, name, fatherName, email, phone, aadhaarNumber, location, schoolName, categoryId, passwordHash(crypto.randomBytes(32).toString('hex')), user.role])
+      const [[activeTest]] = await connection.query('SELECT id FROM tests WHERE active=TRUE AND category_id=? ORDER BY created_at LIMIT 1', [categoryId])
       if (!activeTest) throw new Error('No active assessment is available for registration.')
       await connection.query('INSERT INTO test_assignments (test_id,learner_id) VALUES (?,?)', [activeTest.id, userId])
     })
@@ -211,7 +251,7 @@ app.post('/api/admin/tests', authenticate, requireRole('admin'), async (request,
     if (validationError) return response.status(400).json({ message: validationError })
     const testId = crypto.randomUUID()
     await withTransaction(async (connection) => {
-      if (request.body.active) await connection.query('UPDATE tests SET active=FALSE')
+      if (request.body.active) await connection.query('UPDATE tests SET active=FALSE WHERE category_id=?', [request.body.categoryId])
       await connection.query('INSERT INTO tests (id,title,description,category_id,duration_seconds,active,created_by) VALUES (?,?,?,?,?,?,?)', [testId, request.body.title.trim(), request.body.description.trim(), request.body.categoryId, request.body.durationSeconds, Boolean(request.body.active), request.user.id])
       for (const [index, item] of (request.body.questions || []).entries()) {
         const questionId = crypto.randomUUID()
@@ -228,8 +268,12 @@ app.post('/api/admin/tests/:testId/questions', authenticate, requireRole('admin'
   try {
     if (!request.file) return response.status(400).json({ message: 'An Excel file is required.' })
     const workbook = XLSX.read(request.file.buffer, { type: 'buffer' })
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '' })
-    const questions = rows.map((row) => ({ question: row.question, options: [row['option 1'], row['option 2'], row['option 3'], row['option 4']], answer: row.answer })).filter((item) => item.question)
+    let questions
+    try {
+      questions = parseExcelQuestions(workbook)
+    } catch (parseError) {
+      return response.status(400).json({ message: parseError.message })
+    }
     const validationError = validateTest({ title: 'upload', description: 'upload', categoryId: 'upload', durationSeconds: 60, questions })
     if (validationError) return response.status(400).json({ message: `Excel format error: ${validationError}. Expected question, option 1, option 2, option 3, option 4, answer.` })
     const [[test]] = await pool.query('SELECT id FROM tests WHERE id=?', [request.params.testId])
@@ -238,7 +282,7 @@ app.post('/api/admin/tests/:testId/questions', authenticate, requireRole('admin'
       const [[order]] = await connection.query('SELECT COALESCE(MAX(question_order),-1)+1 next_order FROM questions WHERE test_id=?', [request.params.testId])
       for (const [index, item] of questions.entries()) {
         const questionId = crypto.randomUUID()
-        await connection.query('INSERT INTO questions (id,test_id,question_text,question_order,answer_key) VALUES (?,?,?,?,?)', [questionId, request.params.testId, item.question, order.next_order + index, item.answer])
+        await connection.query('INSERT INTO questions (id,test_id,question_text,section,question_order,answer_key) VALUES (?,?,?,?,?,?)', [questionId, request.params.testId, item.question, item.section, order.next_order + index, item.answer])
         await connection.query('INSERT INTO question_options (question_id,option_text,option_order) VALUES ?', [item.options.map((option, optionIndex) => [questionId, String(option), optionIndex])])
       }
     })
@@ -252,7 +296,7 @@ app.post('/api/admin/tests/:testId/questions/manual', authenticate, requireRole(
     if (validationError) return response.status(400).json({ message: validationError })
     const [[order]] = await pool.query('SELECT COALESCE(MAX(question_order),-1)+1 next_order FROM questions WHERE test_id=?', [request.params.testId])
     const questionId = crypto.randomUUID()
-    await pool.query('INSERT INTO questions (id,test_id,question_text,question_order,answer_key) VALUES (?,?,?,?,?)', [questionId, request.params.testId, request.body.question, order.next_order, request.body.answer])
+    await pool.query('INSERT INTO questions (id,test_id,question_text,section,question_order,answer_key) VALUES (?,?,?,?,?,?)', [questionId, request.params.testId, request.body.question, String(request.body.section || '').trim(), order.next_order, request.body.answer])
     await pool.query('INSERT INTO question_options (question_id,option_text,option_order) VALUES ?', [request.body.options.map((option, index) => [questionId, option, index])])
     response.status(201).json({ added: 1 })
   } catch (error) { next(error) }
@@ -260,7 +304,10 @@ app.post('/api/admin/tests/:testId/questions/manual', authenticate, requireRole(
 
 app.patch('/api/admin/tests/:testId', authenticate, requireRole('admin'), async (request, response, next) => {
   try {
-    if (request.body.active === true) await pool.query('UPDATE tests SET active=FALSE')
+    if (request.body.active === true) {
+      const [[test]] = await pool.query('SELECT category_id FROM tests WHERE id=?', [request.params.testId])
+      if (test) await pool.query('UPDATE tests SET active=FALSE WHERE category_id=?', [test.category_id])
+    }
     const fields = []; const values = []
     for (const field of ['title', 'description', 'active']) if (request.body[field] !== undefined) { fields.push(`${field}=?`); values.push(request.body[field]) }
     if (fields.length) { values.push(request.params.testId); const [result] = await pool.query(`UPDATE tests SET ${fields.join(',')} WHERE id=?`, values); if (!result.affectedRows) return response.status(404).json({ message: 'Test not found.' }) }

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   aadhaar_number CHAR(12) NULL UNIQUE,
   location VARCHAR(180) NULL,
   school_name VARCHAR(180) NULL,
+  category_id CHAR(36) NULL,
   password_hash VARCHAR(255) NOT NULL,
   role ENUM('admin', 'learner') NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS questions (
   id CHAR(36) PRIMARY KEY,
   test_id CHAR(36) NOT NULL,
   question_text TEXT NOT NULL,
+  section VARCHAR(120) NOT NULL DEFAULT '',
   question_order INT UNSIGNED NOT NULL,
   answer_key VARCHAR(500) NOT NULL,
   CONSTRAINT fk_questions_test FOREIGN KEY (test_id) REFERENCES tests(id) ON DELETE CASCADE

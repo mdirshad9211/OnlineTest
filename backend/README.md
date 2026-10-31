@@ -4,8 +4,7 @@ The backend uses Express and MySQL. It provides authentication, role authorizati
 
 ## MySQL setup
 
-1. Copy `.env.example` to `.env`.
-2. Set `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, and a strong `JWT_SECRET`.
+1. Set `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DATABASE`, `MYSQL_USER`, `MYSQL_PASSWORD`, and a strong `JWT_SECRET` in `.env.production`.
 3. Install dependencies and initialize the schema:
 
 ```bash
@@ -14,7 +13,9 @@ npm run db:seed
 npm run dev
 ```
 
-`db:seed` creates the `online_test` database/tables and inserts local development accounts and one assigned assessment.
+`db:seed` reads the four Excel workbooks in the repository root, creates the Med 10+1, Med 10+2, Non-Med 10+1, and Non-Med 10+2 categories/tests, and imports each question with its section, options A-D, and answer key. Learners select their class/stream during registration and are assigned only the matching active test.
+
+The importer accepts a question sheet with `Section`, `Question`, `Option A`, `Option B`, `Option C`, `Option D`, and an answer-key column. It skips title/notes rows and supports separate worksheets when a workbook includes them.
 
 If you already created the previous JSON/MySQL schema, run `sql/migrate-existing.sql` once before `npm run db:seed`.
 
@@ -23,7 +24,7 @@ If you already created the previous JSON/MySQL schema, run `sql/migrate-existing
 | Role | Email | Password |
 |---|---|---|
 | Admin | `admin@quizly.test` | `Admin123!` |
-| Learner | `learner@quizly.test` | `Learner123!` |
+| Learner | Register through the learner page | — |
 
 Change these credentials before using the application outside local development.
 
@@ -64,4 +65,6 @@ The browser records tab visibility changes, window blur, fullscreen exits, copy,
 - `GET /api/admin/monitoring`
 - `GET /api/admin/feedback`
 
-Only one test can be active at a time. Tests can be assigned to specific learner IDs.
+Tests can be active independently per class/stream category and can be assigned to specific learner IDs.
+
+The browser disables text selection, copying, pasting, and context menus while an exam is running and records attempted violations. Browser code cannot guarantee prevention of operating-system screenshots or photographs; preventing those requires a managed exam device or proctoring software.
