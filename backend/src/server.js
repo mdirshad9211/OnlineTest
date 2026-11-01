@@ -335,8 +335,12 @@ app.patch('/api/admin/tests/:testId/questions/:questionId', authenticate, requir
 
 app.delete('/api/admin/tests/:testId/questions/:questionId', authenticate, requireRole('admin'), async (request, response, next) => {
   try {
-    const [result] = await pool.query('DELETE FROM questions WHERE id=? AND test_id=?', [request.params.questionId, request.params.testId])
-    if (!result.affectedRows) return response.status(404).json({ message: 'Question not found.' })
+    const [[question]] = await pool.query('SELECT id FROM questions WHERE id=? AND test_id=?', [request.params.questionId, request.params.testId])
+    if (!question) return response.status(404).json({ message: 'Question not found.' })
+    await withTransaction(async (connection) => {
+      await connection.query('DELETE FROM attempt_answers WHERE question_id=?', [request.params.questionId])
+      await connection.query('DELETE FROM questions WHERE id=? AND test_id=?', [request.params.questionId, request.params.testId])
+    })
     response.status(204).end()
   } catch (error) { next(error) }
 })
